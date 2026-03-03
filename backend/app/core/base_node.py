@@ -33,6 +33,9 @@ class BaseNode(ABC):
         # Evita recomputar si se reutiliza más adelante.
         self.output = None
 
+        # Validamos configuración en el momento de creación
+        self.validate_config()
+
     def add_input(self, node: "BaseNode"):
         """
         Conecta un nodo padre a este nodo.
@@ -40,6 +43,14 @@ class BaseNode(ABC):
         :param node: Nodo del cual depende este nodo.
         """
         self.inputs.append(node)
+    
+    @abstractmethod
+    def validate_config(self):
+        """
+        Cada nodo debe validar su configuración.
+        Debe lanzar InvalidConfigurationError si algo es incorrecto.
+        """
+        pass
 
     @abstractmethod
     def execute(self) -> pd.DataFrame:

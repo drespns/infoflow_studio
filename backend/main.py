@@ -1,40 +1,66 @@
 import os
-import sys
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import shutil
 
-from app.core.pipeline import Pipeline
-from app.transformations.load_csv import LoadCSVNode
-from app.transformations.filter_rows import FilterRowsNode
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.schemas.pipeline_schemas import PipelineSchema
+from app.builder import build_pipeline_from_json
+from app.core.exceptions import InfoflowError
 
-# Creamos una instancia del pipeline
-pipeline = Pipeline()
+app = FastAPI(title="Infoflow Studio API")
 
-# Nodo raíz: carga de datos
-load_node = LoadCSVNode(
-    node_id="load1",
-    config={"path": "sample.csv"}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Nodo de transformación: filtrado
-filter_node = FilterRowsNode(
-    node_id="filter1",
-    config={
-        "column": "age",
-        "operator": ">",
-        "value": 30
+UPLOAD_DIR = "uploads"
+
+@app.post("/upload")
+def upload_file(file: UploadFile = File(...)):
+
+    # Crear carpeta si no existe
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+
+    # Guardar archivo en disco
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "status": "success",
+        "filename": file.filename,
+        "path": file_path
     }
-)
 
-# Añadimos nodos al pipeline
-pipeline.add_node(load_node)
-pipeline.add_node(filter_node)
+@app.post("/execute")
+def execute_pipeline(pipeline_data: PipelineSchema):
+    """
+    Recibe un pipeline en formato JSON,
+    lo construye y lo ejecuta.
+    """
 
-# Conectamos nodos (load → filter)
-pipeline.connect("load1", "filter1")
+    try:
+        pipeline = build_pipeline_from_json(pipeline_data)
 
-# Ejecutamos el pipeline hasta el nodo final
-result = pipeline.execute("filter1")
+        result_df = pipeline.execute(pipeline_data.target)
 
-# Mostramos resultado
-print(result.head())
+        # Convertimos DataFrame a JSON serializable
+        result_json = result_df.to_dict(orient="records")
+
+        return {
+            "status": "success",
+            "rows": len(result_json),
+            "data": result_json
+        }
+
+    except InfoflowError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
